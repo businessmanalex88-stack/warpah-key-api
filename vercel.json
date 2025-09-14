@@ -5,25 +5,29 @@
     {
       "src": "api/*.js",
       "use": "@vercel/node"
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/",
-      "dest": "/index.html"
+      "dest": "/api/index"
     },
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "src": "/api/admin(.*)",
+      "dest": "/api/admin$1"
+    },
+    {
+      "src": "/api/validate",
+      "dest": "/api/validate"
+    },
+    {
+      "src": "/api",
+      "dest": "/api/index"
     }
   ],
   "functions": {
     "api/*.js": {
-      "maxDuration": 10
+      "maxDuration": 30
     }
   },
   "headers": [
