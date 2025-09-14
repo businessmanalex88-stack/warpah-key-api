@@ -1,0 +1,25 @@
+{
+  "name": "warpahvip-key-management",
+  "version": "1.0.0",
+  "description": "HWID-based key management system for WarpahVip Bypass",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Build complete'",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "key-management",
+    "hwid",
+    "api",
+    "security"
+  ],
+  "author": "WarpahVip",
+  "license": "MIT",
+  "dependencies": {
+    "crypto": "^1.0.1"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  }
+}
