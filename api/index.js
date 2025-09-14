@@ -882,3 +882,237 @@ function handleValidation(req, res) {
     }
 
     // Update last used timestamp
+    keyData.lastUsedAt = new Date().toISOString();
+
+    // Log the usage
+    const logEntry = logKeyUsage(keyData, hwid, userInfo);
+
+    // Success response
+    return res.status(200).json({
+      success: true,
+      message: 'Key validated successfully',
+      keyType: 'user',
+      key: keyData.key,
+      hwid: hashedHWID,
+      boundAt: keyData.hwid === hashedHWID ? keyData.lastUsedAt : new Date().toISOString(),
+      validatedAt: new Date().toISOString(),
+      usageCount: global.keyDatabase.usageLogs.filter(log => log.key === key).length
+    });
+
+  } catch (error) {
+    console.error('Validation API Error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
+      message: 'An error occurred while validating the key'
+    });
+  }
+}
+
+// Admin handler
+function handleAdmin(req, res) {
+  const { password, action } = req.query;
+  
+  // Validate admin password
+  if (password !== global.keyDatabase.settings.adminPassword) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Invalid admin password' 
+    });
+  }
+
+  try {
+    switch (action) {
+      case 'generateKey':
+        return handleGenerateKey(req, res);
+      case 'deleteKey':
+        return handleDeleteKey(req, res);
+      case 'resetKey':
+        return handleResetKey(req, res);
+      case 'getUsageLogs':
+        return handleGetUsageLogs(req, res);
+      case 'getStats':
+        return handleGetStats(req, res);
+      default:
+        return handleGetAllKeys(req, res);
+    }
+  } catch (error) {
+    console.error('Admin API Error:', error);
+    return res.status(500).json({ 
+      error: 'Internal Server Error',
+      message: error.message 
+    });
+  }
+}
+
+// Get all keys with status
+function handleGetAllKeys(req, res) {
+  const keysWithStatus = global.keyDatabase.keys.map(keyData => ({
+    ...keyData,
+    isUsed: keyData.hwid !== null,
+    lastUsed: keyData.lastUsedAt || null,
+    usageCount: global.keyDatabase.usageLogs.filter(log => log.key === keyData.key).length
+  }));
+
+  return res.status(200).json({
+    success: true,
+    keys: keysWithStatus,
+    totalKeys: global.keyDatabase.keys.length,
+    usedKeys: global.keyDatabase.keys.filter(k => k.hwid).length,
+    unusedKeys: global.keyDatabase.keys.filter(k => !k.hwid).length
+  });
+}
+
+// Generate new key
+function handleGenerateKey(req, res) {
+  const { count = 1, customKey } = req.query;
+  const generateCount = Math.min(parseInt(count) || 1, 50); // Max 50 keys at once
+  const generatedKeys = [];
+
+  for (let i = 0; i < generateCount; i++) {
+    const keyValue = customKey && i === 0 ? customKey : generateKey();
+    
+    // Check if key already exists
+    if (global.keyDatabase.keys.find(k => k.key === keyValue)) {
+      continue;
+    }
+
+    const newKey = {
+      key: keyValue,
+      createdAt: new Date().toISOString(),
+      hwid: null,
+      lastUsedAt: null,
+      isActive: true
+    };
+
+    global.keyDatabase.keys.push(newKey);
+    generatedKeys.push(keyValue);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: `Generated ${generatedKeys.length} key(s)`,
+    keys: generatedKeys,
+    totalKeys: global.keyDatabase.keys.length
+  });
+}
+
+// Delete key
+function handleDeleteKey(req, res) {
+  const { key } = req.query;
+  
+  if (!key) {
+    return res.status(400).json({ 
+      error: 'Bad Request', 
+      message: 'Key parameter is required' 
+    });
+  }
+
+  const keyIndex = global.keyDatabase.keys.findIndex(k => k.key === key);
+  
+  if (keyIndex === -1) {
+    return res.status(404).json({ 
+      error: 'Not Found', 
+      message: 'Key not found' 
+    });
+  }
+
+  global.keyDatabase.keys.splice(keyIndex, 1);
+  
+  // Remove related usage logs
+  global.keyDatabase.usageLogs = global.keyDatabase.usageLogs.filter(log => log.key !== key);
+
+  return res.status(200).json({
+    success: true,
+    message: 'Key deleted successfully',
+    deletedKey: key,
+    totalKeys: global.keyDatabase.keys.length
+  });
+}
+
+// Reset key (remove HWID binding)
+function handleResetKey(req, res) {
+  const { key } = req.query;
+  
+  if (!key) {
+    return res.status(400).json({ 
+      error: 'Bad Request', 
+      message: 'Key parameter is required' 
+    });
+  }
+
+  const keyData = global.keyDatabase.keys.find(k => k.key === key);
+  
+  if (!keyData) {
+    return res.status(404).json({ 
+      error: 'Not Found', 
+      message: 'Key not found' 
+    });
+  }
+
+  // Reset HWID binding
+  keyData.hwid = null;
+  keyData.lastUsedAt = null;
+
+  return res.status(200).json({
+    success: true,
+    message: 'HWID binding reset successfully. Key is now available for new device.',
+    key: key,
+    status: 'Available for new device'
+  });
+}
+
+// Get usage logs
+function handleGetUsageLogs(req, res) {
+  const { key, limit = 100 } = req.query;
+  let logs = global.keyDatabase.usageLogs;
+
+  if (key) {
+    logs = logs.filter(log => log.key === key);
+  }
+
+  // Sort by timestamp (newest first) and limit results
+  logs = logs
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, parseInt(limit));
+
+  return res.status(200).json({
+    success: true,
+    logs: logs,
+    totalLogs: global.keyDatabase.usageLogs.length
+  });
+}
+
+// Get statistics
+function handleGetStats(req, res) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const thisWeek = new Date(today.getTime() - (7 * 24 * 60 * 60 * 1000));
+
+  const todayUsage = global.keyDatabase.usageLogs.filter(log => 
+    new Date(log.timestamp) >= today
+  ).length;
+
+  const weekUsage = global.keyDatabase.usageLogs.filter(log => 
+    new Date(log.timestamp) >= thisWeek
+  ).length;
+
+  const uniqueUsers = [...new Set(global.keyDatabase.usageLogs.map(log => log.userId))].length;
+  const uniqueHWIDs = [...new Set(global.keyDatabase.keys.filter(k => k.hwid).map(k => k.hwid))].length;
+
+  return res.status(200).json({
+    success: true,
+    stats: {
+      totalKeys: global.keyDatabase.keys.length,
+      usedKeys: global.keyDatabase.keys.filter(k => k.hwid).length,
+      unusedKeys: global.keyDatabase.keys.filter(k => !k.hwid).length,
+      totalUsage: global.keyDatabase.usageLogs.length,
+      todayUsage: todayUsage,
+      weekUsage: weekUsage,
+      uniqueUsers: uniqueUsers,
+      uniqueHWIDs: uniqueHWIDs,
+      lastActivity: global.keyDatabase.usageLogs.length > 0 ? 
+        global.keyDatabase.usageLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0].timestamp : null
+    }
+  });
+                             }
